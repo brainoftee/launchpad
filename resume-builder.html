@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Resume Builder — LaunchPad</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+</head>
+<body class="tool-page">
+
+  <!-- HEADER -->
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="index.html" class="logo">
+        <span class="logo-icon">⚡</span>
+        <span class="logo-text">LaunchPad</span>
+      </a>
+      <nav class="main-nav">
+        <a href="resume-builder.html" style="color: var(--accent)">Resume</a>
+        <a href="job-finder.html">Job Finder</a>
+        <a href="tailor.html">Tailor</a>
+        <a href="hacks.html">Hacks</a>
+        <a href="interview-prep.html">Interview Prep</a>
+        <a href="coaching.html" class="nav-cta">Work With Tee →</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- TOOL HERO -->
+  <div class="tool-hero">
+    <div class="hero-badge">Tool 01</div>
+    <h1>📄 Resume Builder</h1>
+    <p>Answer a few questions and get a polished, ATS-friendly resume — or paste yours in for instant feedback.</p>
+  </div>
+
+  <!-- MODE SWITCHER -->
+  <div class="mode-switcher">
+    <button class="mode-btn mode-btn--active" id="btn-build" onclick="switchMode('build')">
+      ✨ Build My Resume
+    </button>
+    <button class="mode-btn" id="btn-review" onclick="switchMode('review')">
+      🔍 Review My Resume
+    </button>
+  </div>
+
+  <!-- ═══════════ MODE 1: BUILD ═══════════ -->
+  <div class="tool-body" id="mode-build">
+    <div class="chat-panel">
+
+      <div class="chat-messages" id="chat-messages">
+        <div class="message message--ai">
+          👋 Hi! I'm your AI resume support coach. I'll ask you a few questions and build you a polished, ATS-friendly resume.<br/><br/>
+          Let's start simple: <strong>What's your full name and what kind of role are you looking for?</strong>
+        </div>
+      </div>
+
+      <div class="chat-input-row">
+        <textarea
+          class="chat-input"
+          id="chat-input"
+          placeholder="Type your answer here..."
+          rows="2"
+          onkeydown="handleKey(event)"
+        ></textarea>
+        <button class="btn-send" id="send-btn" onclick="sendMessage()">Send →</button>
+      </div>
+
+      <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+        <button class="btn-secondary" onclick="generateResume()">⚡ Generate Full Resume</button>
+        <button class="btn-secondary" onclick="clearChat()">🗑 Start Over</button>
+      </div>
+
+    </div>
+
+    <!-- RESUME OUTPUT -->
+    <div id="resume-output-section" style="display:none; margin-top:2rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <span class="label">Your Generated Resume</span>
+        <button class="btn-secondary" onclick="copyResume()">📋 Copy to Clipboard</button>
+      </div>
+      <div class="output-box" id="resume-output"></div>
+      <p style="font-size:0.82rem; color:var(--text-muted); margin-top:0.75rem;">
+        💡 Tip: Copy this into Google Docs or Word to format and download as a PDF.
+      </p>
+    </div>
+
+  </div>
+
+  <!-- ═══════════ MODE 2: REVIEW ═══════════ -->
+  <div class="tool-body" id="mode-review" style="display:none;">
+    <div class="chat-panel">
+
+      <span class="label">Paste your current resume below</span>
+      <textarea
+        class="big-input"
+        id="review-input"
+        placeholder="Paste your full resume text here — including your name, experience, skills, education..."
+        style="min-height: 280px;"
+      ></textarea>
+
+      <button class="btn-send" onclick="reviewResume()" id="review-btn" style="align-self:flex-start;">
+        🔍 Analyse My Resume →
+      </button>
+
+      <div id="review-output-section" style="display:none; margin-top:1rem;">
+        <span class="label">AI Feedback & Suggestions</span>
+        <div class="output-box" id="review-output"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- DISCLAIMER -->
+  <p class="disclaimer">
+    ⚠️ This tool uses AI — always review output before using. Results may vary.
+  </p>
+
+  <!-- ═══════════════════════════════════════
+       JAVASCRIPT — All logic lives here
+  ════════════════════════════════════════ -->
+  <script>
+
+    // ── IMPORTANT: Replace this with YOUR Cloudflare Worker URL ──
+    const WORKER_URL = "https://launchpad-api.zaheri-tamina.workers.dev";
+
+    // Stores the conversation history so Claude remembers context
+    let conversationHistory = [];
+
+    // ── MODE SWITCHER ──────────────────────────────────────────
+    function switchMode(mode) {
+      const buildEl  = document.getElementById("mode-build");
+      const reviewEl = document.getElementById("mode-review");
+      const btnBuild  = document.getElementById("btn-build");
+      const btnReview = document.getElementById("btn-review");
+
+      if (mode === "build") {
+        buildEl.style.display  = "block";
+        reviewEl.style.display = "none";
+        btnBuild.classList.add("mode-btn--active");
+        btnReview.classList.remove("mode-btn--active");
+      } else {
+        buildEl.style.display  = "none";
+        reviewEl.style.display = "block";
+        btnReview.classList.add("mode-btn--active");
+        btnBuild.classList.remove("mode-btn--active");
+      }
+    }
+
+    // ── CHAT: SEND A MESSAGE ───────────────────────────────────
+    async function sendMessage() {
+      const input   = document.getElementById("chat-input");
+      const sendBtn = document.getElementById("send-btn");
+      const userText = input.value.trim();
+      if (!userText) return;
+
+      // Show user message
+      appendMessage(userText, "user");
+      input.value = "";
+      sendBtn.disabled = true;
+
+      // Add to history
+      conversationHistory.push({ role: "user", content: userText });
+
+      // Show loading
+      const loadingId = appendMessage("Thinking...", "loading");
+
+      try {
+        const response = await fetch(WORKER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system: `You are an expert resume coach and writer helping a job seeker build a strong, ATS-friendly resume.
+Your job is to ask targeted questions one at a time to gather: name, target role, work experience (companies, titles, dates, achievements), education, skills, and any certifications.
+Ask ONE question at a time. Be warm, encouraging, and specific. 
+When the user says they're done or you have enough info, tell them to click "Generate Full Resume".
+Keep responses short — under 100 words unless generating the resume.`,
+            messages: conversationHistory,
+          }),
+        });
+
+        const data = await response.json();
+        removeMessage(loadingId);
+
+        if (data.error) {
+          appendMessage("⚠️ " + data.error, "ai");
+        } else {
+          const aiReply = data.content;
+          conversationHistory.push({ role: "assistant", content: aiReply });
+          appendMessage(aiReply, "ai");
+        }
+
+      } catch (err) {
+        removeMessage(loadingId);
+        appendMessage("⚠️ Could not connect. Check your internet and try again.", "ai");
+      }
+
+      sendBtn.disabled = false;
+      input.focus();
+    }
+
+    // ── GENERATE FULL RESUME ────────────────────────────────────
+    async function generateResume() {
+      if (conversationHistory.length === 0) {
+        alert("Please chat with the assistant first so it has your information!");
+        return;
+      }
+
+      const outputSection = document.getElementById("resume-output-section");
+      const outputBox     = document.getElementById("resume-output");
+
+      outputSection.style.display = "block";
+      outputBox.textContent = "⚡ Generating your resume...";
+
+      // Scroll down to the output
+      outputSection.scrollIntoView({ behavior: "smooth" });
+
+      // Build the generation prompt
+      const generationMessages = [
+        ...conversationHistory,
+        {
+          role: "user",
+          content: "Now please generate my complete, polished resume based on everything I've told you. Format it clearly with sections: Contact Info, Professional Summary, Work Experience, Skills, Education. Use bullet points for achievements. Make it ATS-friendly."
+        }
+      ];
+
+      try {
+        const response = await fetch(WORKER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system: `You are an expert resume writer. Generate a complete, professional, ATS-optimised resume.
+Use this exact format:
+[FULL NAME]
+[Email] | [Phone] | [LinkedIn] | [Location]
+
+PROFESSIONAL SUMMARY
+2-3 sentence summary highlighting key strengths and target role.
+
+WORK EXPERIENCE
+[Job Title] — [Company Name] | [Start Date] – [End Date]
+- Achievement-focused bullet point with numbers where possible
+- Achievement-focused bullet point
+- Achievement-focused bullet point
+
+SKILLS
+Technical: skill1, skill2, skill3
+Soft Skills: skill1, skill2, skill3
+
+EDUCATION
+[Degree] — [Institution] | [Year]
+
+If any information is missing, use a placeholder like [Your Email] so they can fill it in.`,
+            messages: generationMessages,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          outputBox.textContent = "⚠️ " + data.error;
+        } else {
+          outputBox.textContent = data.content;
+        }
+
+      } catch (err) {
+        outputBox.textContent = "⚠️ Could not connect. Please try again.";
+      }
+    }
+
+    // ── REVIEW EXISTING RESUME ──────────────────────────────────
+    async function reviewResume() {
+      const input      = document.getElementById("review-input");
+      const reviewBtn  = document.getElementById("review-btn");
+      const outputSection = document.getElementById("review-output-section");
+      const outputBox  = document.getElementById("review-output");
+      const resumeText = input.value.trim();
+
+      if (!resumeText) {
+        alert("Please paste your resume text first!");
+        return;
+      }
+
+      reviewBtn.disabled = true;
+      outputSection.style.display = "block";
+      outputBox.textContent = "🔍 Analysing your resume...";
+      outputSection.scrollIntoView({ behavior: "smooth" });
+
+      try {
+        const response = await fetch(WORKER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system: `You are an expert resume coach and recruiter with 15 years experience.
+Review the resume provided and give structured, actionable feedback.
+Format your response exactly like this:
+
+OVERALL SCORE: X/10
+
+✅ STRENGTHS (what's working)
+- Point 1
+- Point 2
+
+⚠️ AREAS TO IMPROVE (be specific)
+- Point 1 with specific fix
+- Point 2 with specific fix
+
+🔑 MISSING ATS KEYWORDS
+List 5-8 keywords commonly expected for this type of role
+
+⚡ QUICK WINS (easiest changes for biggest impact)
+- Quick fix 1
+- Quick fix 2
+- Quick fix 3
+
+Be honest but encouraging. Keep total response under 500 words.`,
+            messages: [
+              { role: "user", content: `Please review my resume:\n\n${resumeText}` }
+            ],
+          }),
+        });
+
+        const data = await response.json();
+
+        if (data.error) {
+          outputBox.textContent = "⚠️ " + data.error;
+        } else {
+          outputBox.textContent = data.content;
+        }
+
+      } catch (err) {
+        outputBox.textContent = "⚠️ Could not connect. Please try again.";
+      }
+
+      reviewBtn.disabled = false;
+    }
+
+    // ── HELPER: APPEND A MESSAGE TO THE CHAT ───────────────────
+    function appendMessage(text, type) {
+      const messages = document.getElementById("chat-messages");
+      const id = "msg-" + Date.now();
+      const div = document.createElement("div");
+      div.id = id;
+      div.className = `message message--${type}`;
+      div.innerHTML = text.replace(/\n/g, "<br/>");
+      messages.appendChild(div);
+      messages.scrollTop = messages.scrollHeight;
+      return id;
+    }
+
+    function removeMessage(id) {
+      const el = document.getElementById(id);
+      if (el) el.remove();
+    }
+
+    // ── CLEAR CHAT ──────────────────────────────────────────────
+    function clearChat() {
+      conversationHistory = [];
+      const messages = document.getElementById("chat-messages");
+      messages.innerHTML = `
+        <div class="message message--ai">
+          👋 Fresh start! <strong>What's your full name and what kind of role are you looking for?</strong>
+        </div>`;
+      document.getElementById("resume-output-section").style.display = "none";
+    }
+
+    // ── COPY RESUME TO CLIPBOARD ────────────────────────────────
+    function copyResume() {
+      const text = document.getElementById("resume-output").textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        alert("✅ Resume copied to clipboard! Paste it into Google Docs or Word.");
+      });
+    }
+
+    // ── SEND ON ENTER (Shift+Enter for new line) ────────────────
+    function handleKey(event) {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    }
+
+  </script>
+
+  <!-- Mode switcher styles -->
+  <style>
+    .mode-switcher {
+      display: flex;
+      gap: 0.75rem;
+      justify-content: center;
+      padding: 1.5rem 2rem 0;
+      max-width: 860px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .mode-btn {
+      flex: 1;
+      max-width: 240px;
+      padding: 12px 20px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text-muted);
+      font-family: var(--font-display);
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+
+    .mode-btn:hover {
+      border-color: var(--accent);
+      color: var(--text-primary);
+    }
+
+    .mode-btn--active {
+      background: rgba(110, 231, 183, 0.1);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+  </style>
+
+</body>
+</html>
