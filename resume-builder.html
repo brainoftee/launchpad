@@ -135,6 +135,7 @@
         <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
           <button class="btn-secondary" onclick="copyResume()">📋 Copy to Clipboard</button>
           <button class="btn-secondary" onclick="downloadResumePDF()" id="download-btn">⬇️ Download as PDF</button>
+          <button class="btn-secondary" onclick="exportToGoogleDocs()" id="gdocs-btn">📝 Export to Google Docs</button>
         </div>
       </div>
       <div class="output-box" id="resume-output"></div>
@@ -182,6 +183,28 @@
 
     // Stores the conversation history so Claude remembers context
     let conversationHistory = [];
+
+    // ── CLEAN MARKDOWN SYMBOLS FROM AI OUTPUT ──────────────────
+    // The AI sometimes returns markdown. This strips it to plain text.
+    function cleanMarkdown(text) {
+      return text
+        // Remove heading hashes (e.g. ## WORK EXPERIENCE or # TAMINA)
+        .replace(/^#{1,3}\s*/gm, "")
+        // Remove bold markers (e.g. **text** or __text__)
+        .replace(/\*\*(.*?)\*\*/g, "$1")
+        .replace(/__(.*?)__/g, "$1")
+        // Remove single asterisks used for italic
+        .replace(/\*(.*?)\*/g, "$1")
+        // Remove divider lines that are just dashes
+        .replace(/^[-]{2,}\s*$/gm, "")
+        // Remove lines that are just asterisks or underscores
+        .replace(/^[*_]{2,}\s*$/gm, "")
+        // Clean up any remaining lone asterisks at line start (used as bullets)
+        .replace(/^\*\s+/gm, "- ")
+        // Collapse 3+ blank lines into 2
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    }
 
     // ── MODE SWITCHER ──────────────────────────────────────────
     function switchMode(mode) {
@@ -286,27 +309,40 @@ Keep responses short — under 100 words unless generating the resume.`,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             system: `You are an expert resume writer. Generate a complete, professional, ATS-optimised resume.
-Use this exact format:
-[FULL NAME]
-[Email] | [Phone] | [LinkedIn] | [Location]
+
+CRITICAL FORMATTING RULES — follow exactly:
+- Use NO markdown. No #, ##, **, *, __, or --- anywhere in your output.
+- Section headers should be in ALL CAPS plain text, no symbols before or after.
+- Use a plain hyphen-dash ( - ) for bullet points, nothing else.
+- Separate sections with one blank line only.
+- Do not use horizontal dividers, asterisk lines, or any decorative characters.
+
+Use this exact plain-text format:
+
+FULL NAME
+Email | Phone | LinkedIn | Location
 
 PROFESSIONAL SUMMARY
 2-3 sentence summary highlighting key strengths and target role.
 
 WORK EXPERIENCE
-[Job Title] — [Company Name] | [Start Date] – [End Date]
-- Achievement-focused bullet point with numbers where possible
-- Achievement-focused bullet point
-- Achievement-focused bullet point
+
+Job Title — Company Name | Start Date – End Date
+- Achievement with numbers where possible
+- Achievement
+- Achievement
 
 SKILLS
 Technical: skill1, skill2, skill3
 Soft Skills: skill1, skill2, skill3
 
 EDUCATION
-[Degree] — [Institution] | [Year]
+Degree — Institution | Year
 
-If any information is missing, use a placeholder like [Your Email] so they can fill it in.`,
+CERTIFICATIONS
+Certification Name — Issuing Body | Year
+
+If any information is missing, write [Your Email] or [Your Phone] as a placeholder so they can fill it in.`,
             messages: generationMessages,
           }),
         });
@@ -316,7 +352,7 @@ If any information is missing, use a placeholder like [Your Email] so they can f
         if (data.error) {
           outputBox.textContent = "⚠️ " + data.error;
         } else {
-          outputBox.textContent = data.content;
+          outputBox.textContent = cleanMarkdown(data.content);
         }
 
       } catch (err) {
@@ -648,6 +684,161 @@ Be honest but encouraging. Keep total response under 500 words.`,
           downloadBtn.textContent = "⬇️ Download as PDF";
           alert("PDF generation failed. Use the Copy button and paste into Google Docs instead.");
         });
+    }
+
+    // ── EXPORT RESUME TO GOOGLE DOCS ────────────────────────────
+    // Creates a clean .docx-compatible HTML file and downloads it.
+    // User can then open it in Google Docs via File > Open.
+    function exportToGoogleDocs() {
+      const resumeText = document.getElementById("resume-output").textContent;
+
+      if (!resumeText || resumeText.includes("Generating your resume")) {
+        alert("Please generate your resume first!");
+        return;
+      }
+
+      const gdocsBtn = document.getElementById("gdocs-btn");
+      gdocsBtn.disabled = true;
+      gdocsBtn.textContent = "⏳ Preparing...";
+
+      // Convert plain text resume into clean, styled HTML
+      // that Google Docs will import with proper formatting
+      const lines = resumeText.split("\n");
+      let htmlBody = "";
+      let isFirstLine = true;
+
+      lines.forEach(line => {
+        const trimmed = line.trim();
+
+        if (!trimmed) {
+          htmlBody += "<p style='margin:6px 0;'>&nbsp;</p>";
+          return;
+        }
+
+        // First non-empty line = the person's name
+        if (isFirstLine) {
+          htmlBody += `<h1 style="font-family: Calibri, Arial, sans-serif; font-size: 20pt; font-weight: bold; margin: 0 0 4px 0; color: #000;">${trimmed}</h1>`;
+          isFirstLine = false;
+          return;
+        }
+
+        // Contact line (contains @ or phone pattern)
+        if (trimmed.includes("@") || trimmed.match(/\d{3}[-.\s]\d{3}/)) {
+          htmlBody += `<p style="font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #333; margin: 0 0 12px 0;">${trimmed}</p>`;
+          return;
+        }
+
+        // Section headers — ALL CAPS lines that are not bullet points
+        if (
+          trimmed === trimmed.toUpperCase() &&
+          trimmed.length > 2 &&
+          !trimmed.startsWith("-") &&
+          !trimmed.match(/^\d/)
+        ) {
+          htmlBody += `<h2 style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #000; padding-bottom: 2px; margin: 16px 0 6px 0; color: #000;">${trimmed}</h2>`;
+          return;
+        }
+
+        // Job title lines (contain " — " or " | " with dates)
+        if ((trimmed.includes(" — ") || trimmed.includes(" – ")) && trimmed.includes("|")) {
+          htmlBody += `<p style="font-family: Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: bold; margin: 8px 0 2px 0; color: #000;">${trimmed}</p>`;
+          return;
+        }
+
+        // Bullet points
+        if (trimmed.startsWith("-") || trimmed.startsWith("•")) {
+          const bulletText = trimmed.replace(/^[-•]\s*/, "");
+          htmlBody += `<p style="font-family: Calibri, Arial, sans-serif; font-size: 10pt; margin: 2px 0 2px 18pt; color: #000;">• ${bulletText}</p>`;
+          return;
+        }
+
+        // Default paragraph
+        htmlBody += `<p style="font-family: Calibri, Arial, sans-serif; font-size: 10pt; margin: 3px 0; color: #000;">${trimmed}</p>`;
+      });
+
+      // Wrap in full HTML document with Word-compatible meta tags
+      const today = new Date().toISOString().split("T")[0];
+      const fullHTML = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name=ProgId content=Word.Document>
+  <meta name=Generator content="Microsoft Word 15">
+  <title>Resume_${today}</title>
+  <style>
+    @page {
+      margin: 1in;
+      size: letter;
+    }
+    body {
+      font-family: Calibri, Arial, sans-serif;
+      font-size: 10pt;
+      line-height: 1.4;
+      color: #000;
+      background: #fff;
+      max-width: 100%;
+    }
+  </style>
+</head>
+<body>
+  ${htmlBody}
+</body>
+</html>`;
+
+      // Download as .html file — Google Docs opens .html files cleanly
+      const blob = new Blob([fullHTML], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Resume_${today}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      // Show instructions to the user
+      setTimeout(() => {
+        gdocsBtn.disabled = false;
+        gdocsBtn.textContent = "📝 Export to Google Docs";
+        showGoogleDocsInstructions();
+      }, 500);
+    }
+
+    // ── SHOW GOOGLE DOCS UPLOAD INSTRUCTIONS ───────────────────
+    function showGoogleDocsInstructions() {
+      const existing = document.getElementById("gdocs-instructions");
+      if (existing) return; // already showing
+
+      const instructions = document.createElement("div");
+      instructions.id = "gdocs-instructions";
+      instructions.style.cssText = `
+        margin-top: 1rem;
+        padding: 1rem 1.25rem;
+        background: rgba(110, 231, 183, 0.05);
+        border: 1px solid rgba(110, 231, 183, 0.2);
+        border-radius: 14px;
+        font-size: 0.85rem;
+        line-height: 1.7;
+        color: #8888aa;
+      `;
+      instructions.innerHTML = `
+        <p style="font-weight:600; color:#f0f0f5; margin-bottom:0.4rem;">✅ File downloaded! Open it in Google Docs:</p>
+        <ol style="padding-left:1.2rem; margin:0;">
+          <li>Go to <strong style="color:#f0f0f5;">docs.google.com</strong></li>
+          <li>Click <strong style="color:#f0f0f5;">Folder icon → Upload</strong> (top right of the file picker)</li>
+          <li>Upload the <strong style="color:#f0f0f5;">Resume_[date].html</strong> file you just downloaded</li>
+          <li>Google Docs will open it with full formatting — ready to edit and save as PDF</li>
+        </ol>
+      `;
+
+      const outputSection = document.getElementById("resume-output-section");
+      outputSection.appendChild(instructions);
+
+      // Auto-hide after 20 seconds
+      setTimeout(() => {
+        if (instructions.parentNode) instructions.remove();
+      }, 20000);
     }
 
   </script>
