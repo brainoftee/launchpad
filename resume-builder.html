@@ -7,6 +7,9 @@
   <link rel="stylesheet" href="style.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 </head>
 <body class="tool-page">
 
@@ -33,6 +36,57 @@
     <div class="hero-badge">Tool 01</div>
     <h1>📄 Resume Builder</h1>
     <p>Answer a few questions and get a polished, ATS-friendly resume — or paste yours in for instant feedback.</p>
+  </div>
+
+  <!-- IMPORT BAR -->
+  <div class="import-bar">
+    <p class="import-label">⚡ Speed things up — import your existing resume or LinkedIn export:</p>
+    <div class="import-buttons">
+
+      <!-- Resume file upload (PDF, DOCX, TXT) -->
+      <label class="import-btn" for="resume-file-input">
+        📎 Import Resume (PDF, DOCX, TXT)
+      </label>
+      <input
+        type="file"
+        id="resume-file-input"
+        accept=".pdf,.docx,.txt"
+        style="display:none;"
+        onchange="handleResumeImport(event)"
+      />
+
+      <!-- LinkedIn export upload -->
+      <button class="import-btn" onclick="toggleLinkedInGuide()">
+        💼 Import from LinkedIn
+      </button>
+
+    </div>
+
+    <!-- LinkedIn step-by-step guide (hidden by default) -->
+    <div id="linkedin-guide" style="display:none;" class="linkedin-guide">
+      <p class="guide-title">How to export your LinkedIn profile (takes ~2 min):</p>
+      <ol>
+        <li>Go to <strong>linkedin.com</strong> → click your profile photo (top right)</li>
+        <li>Click <strong>Settings & Privacy</strong></li>
+        <li>Click <strong>Data Privacy</strong> → then <strong>"Get a copy of your data"</strong></li>
+        <li>Select <strong>"The works"</strong> → click <strong>Request archive</strong></li>
+        <li>LinkedIn emails you a ZIP file — usually within 10 minutes</li>
+        <li>Unzip it → find the file called <strong>Profile.pdf</strong> → upload it below</li>
+      </ol>
+      <label class="import-btn import-btn--accent" for="linkedin-file-input">
+        📎 Upload LinkedIn Profile.pdf
+      </label>
+      <input
+        type="file"
+        id="linkedin-file-input"
+        accept=".pdf,.txt"
+        style="display:none;"
+        onchange="handleLinkedInImport(event)"
+      />
+    </div>
+
+    <!-- Status message shown during/after import -->
+    <div id="import-status" style="display:none;" class="import-status"></div>
   </div>
 
   <!-- MODE SWITCHER -->
@@ -76,14 +130,15 @@
 
     <!-- RESUME OUTPUT -->
     <div id="resume-output-section" style="display:none; margin-top:2rem;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:0.75rem;">
         <span class="label">Your Generated Resume</span>
-        <button class="btn-secondary" onclick="copyResume()">📋 Copy to Clipboard</button>
+        <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+          <button class="btn-secondary" onclick="copyResume()">📋 Copy to Clipboard</button>
+          <button class="btn-secondary" onclick="downloadResumePDF()" id="download-btn">⬇️ Download as PDF</button>
+        </div>
       </div>
       <div class="output-box" id="resume-output"></div>
-      <p style="font-size:0.82rem; color:var(--text-muted); margin-top:0.75rem;">
-        💡 Tip: Copy this into Google Docs or Word to format and download as a PDF.
-      </p>
+      <div id="download-toast" style="display:none;" class="toast">✅ Resume downloaded!</div>
     </div>
 
   </div>
@@ -381,6 +436,220 @@ Be honest but encouraging. Keep total response under 500 words.`,
       }
     }
 
+
+    // ── TOGGLE LINKEDIN GUIDE ───────────────────────────────────
+    function toggleLinkedInGuide() {
+      const guide = document.getElementById("linkedin-guide");
+      guide.style.display = guide.style.display === "none" ? "block" : "none";
+    }
+
+    // ── SHOW IMPORT STATUS MESSAGE ──────────────────────────────
+    function showImportStatus(message, isError = false) {
+      const status = document.getElementById("import-status");
+      status.style.display = "block";
+      status.textContent = message;
+      status.style.color = isError ? "#f87171" : "var(--accent)";
+    }
+
+    // ── EXTRACT TEXT FROM A FILE (PDF, DOCX, TXT) ──────────────
+    async function extractTextFromFile(file) {
+      const extension = file.name.split(".").pop().toLowerCase();
+
+      // Plain text — use FileReader directly
+      if (extension === "txt") {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = e => resolve(e.target.result);
+          reader.onerror = () => reject(new Error("Could not read .txt file"));
+          reader.readAsText(file);
+        });
+      }
+
+      // PDF — use PDF.js
+      if (extension === "pdf") {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = async e => {
+            try {
+              pdfjsLib.GlobalWorkerOptions.workerSrc =
+                "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+              const pdf = await pdfjsLib.getDocument({ data: e.target.result }).promise;
+              let fullText = "";
+              for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const content = await page.getTextContent();
+                fullText += content.items.map(item => item.str).join(" ") + "\n";
+              }
+              resolve(fullText.trim());
+            } catch (err) {
+              reject(new Error("Could not read PDF. Try saving as .txt and uploading again."));
+            }
+          };
+          reader.onerror = () => reject(new Error("Could not read PDF file."));
+          reader.readAsArrayBuffer(file);
+        });
+      }
+
+      // DOCX — use Mammoth.js
+      if (extension === "docx") {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = async e => {
+            try {
+              const result = await mammoth.extractRawText({ arrayBuffer: e.target.result });
+              resolve(result.value.trim());
+            } catch (err) {
+              reject(new Error("Could not read .docx file. Try saving as .txt and uploading again."));
+            }
+          };
+          reader.onerror = () => reject(new Error("Could not read .docx file."));
+          reader.readAsArrayBuffer(file);
+        });
+      }
+
+      throw new Error("Unsupported file type. Please upload a PDF, DOCX, or TXT file.");
+    }
+
+    // ── HANDLE RESUME IMPORT ────────────────────────────────────
+    async function handleResumeImport(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      showImportStatus("📖 Reading your resume...");
+
+      try {
+        const text = await extractTextFromFile(file);
+
+        if (!text || text.length < 50) {
+          showImportStatus("⚠️ The file appears to be empty or could not be read. Try a .txt version.", true);
+          return;
+        }
+
+        // Switch to Build mode so the chat is visible
+        switchMode("build");
+
+        // Pre-load the extracted text as the user's first chat message
+        const input = document.getElementById("chat-input");
+        input.value = `Here is my existing resume:\n\n${text}\n\nPlease review it, suggest improvements, and help me rebuild it into a stronger, more ATS-friendly version.`;
+
+        showImportStatus(`✅ Resume imported (${file.name}) — review the message below and hit Send!`);
+
+      } catch (err) {
+        showImportStatus("⚠️ " + err.message, true);
+      }
+
+      // Reset the file input so the same file can be re-uploaded if needed
+      event.target.value = "";
+    }
+
+    // ── HANDLE LINKEDIN IMPORT ──────────────────────────────────
+    async function handleLinkedInImport(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      showImportStatus("📖 Reading your LinkedIn export...");
+
+      try {
+        const text = await extractTextFromFile(file);
+
+        if (!text || text.length < 50) {
+          showImportStatus("⚠️ Could not extract content from this file. Make sure you uploaded Profile.pdf from the LinkedIn export ZIP.", true);
+          return;
+        }
+
+        switchMode("build");
+
+        const input = document.getElementById("chat-input");
+        input.value = `Here is my LinkedIn profile export:\n\n${text}\n\nPlease use this information to build me a polished, professional resume. Fill in any standard sections and ask me if anything important is missing.`;
+
+        // Collapse the LinkedIn guide after successful import
+        document.getElementById("linkedin-guide").style.display = "none";
+        showImportStatus(`✅ LinkedIn profile imported (${file.name}) — review the message below and hit Send!`);
+
+      } catch (err) {
+        showImportStatus("⚠️ " + err.message, true);
+      }
+
+      event.target.value = "";
+    }
+
+    // ── DOWNLOAD RESUME AS PDF ──────────────────────────────────
+    function downloadResumePDF() {
+      const resumeText = document.getElementById("resume-output").textContent;
+
+      if (!resumeText || resumeText.includes("Generating your resume")) {
+        alert("Please generate your resume first!");
+        return;
+      }
+
+      const downloadBtn = document.getElementById("download-btn");
+      downloadBtn.disabled = true;
+      downloadBtn.textContent = "⏳ Preparing PDF...";
+
+      // Build a clean, print-friendly HTML version of the resume
+      const styledHTML = `
+        <div style="
+          font-family: Georgia, 'Times New Roman', serif;
+          font-size: 11pt;
+          line-height: 1.5;
+          color: #000;
+          background: #fff;
+          padding: 0;
+          max-width: 100%;
+        ">
+          ${resumeText
+            .split("\n")
+            .map(line => {
+              const trimmed = line.trim();
+              if (!trimmed) return "<br/>";
+              // Detect section headers (all caps or ends with colon)
+              if (trimmed === trimmed.toUpperCase() && trimmed.length > 2 && !trimmed.startsWith("-")) {
+                return `<h2 style="font-size:12pt; font-weight:bold; border-bottom:1px solid #000; padding-bottom:2px; margin:16px 0 6px;">${trimmed}</h2>`;
+              }
+              // Bullet points
+              if (trimmed.startsWith("-") || trimmed.startsWith("•")) {
+                return `<p style="margin:3px 0 3px 18px;">• ${trimmed.replace(/^[-•]\s*/, "")}</p>`;
+              }
+              return `<p style="margin:4px 0;">${trimmed}</p>`;
+            })
+            .join("")}
+        </div>
+      `;
+
+      const container = document.createElement("div");
+      container.innerHTML = styledHTML;
+
+      // Generate today's date for the filename
+      const today = new Date().toISOString().split("T")[0];
+      const filename = `Resume_${today}.pdf`;
+
+      const options = {
+        margin:      [0.85, 0.85, 0.85, 0.85],
+        filename:    filename,
+        image:       { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF:       { unit: "in", format: "letter", orientation: "portrait" }
+      };
+
+      html2pdf()
+        .set(options)
+        .from(container)
+        .save()
+        .then(() => {
+          downloadBtn.disabled = false;
+          downloadBtn.textContent = "⬇️ Download as PDF";
+          // Show success toast
+          const toast = document.getElementById("download-toast");
+          toast.style.display = "block";
+          setTimeout(() => { toast.style.display = "none"; }, 3000);
+        })
+        .catch(() => {
+          downloadBtn.disabled = false;
+          downloadBtn.textContent = "⬇️ Download as PDF";
+          alert("PDF generation failed. Use the Copy button and paste into Google Docs instead.");
+        });
+    }
+
   </script>
 
   <!-- Mode switcher styles -->
@@ -419,6 +688,100 @@ Be honest but encouraging. Keep total response under 500 words.`,
       background: rgba(110, 231, 183, 0.1);
       border-color: var(--accent);
       color: var(--accent);
+    }
+
+    /* Import bar */
+    .import-bar {
+      max-width: 860px;
+      margin: 1.5rem auto 0;
+      padding: 1.25rem 2rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: calc(100% - 4rem);
+    }
+
+    .import-label {
+      font-size: 0.88rem;
+      color: var(--text-muted);
+      margin-bottom: 0.85rem;
+    }
+
+    .import-buttons {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .import-btn {
+      display: inline-block;
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 9px 18px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: border-color var(--transition), color var(--transition);
+      font-family: var(--font-body);
+    }
+
+    .import-btn:hover {
+      border-color: var(--accent);
+      color: var(--text-primary);
+    }
+
+    .import-btn--accent {
+      border-color: var(--accent);
+      color: var(--accent);
+      margin-top: 0.75rem;
+    }
+
+    /* LinkedIn guide */
+    .linkedin-guide {
+      margin-top: 1rem;
+      padding: 1rem 1.25rem;
+      background: rgba(110, 231, 183, 0.04);
+      border: 1px solid rgba(110, 231, 183, 0.15);
+      border-radius: var(--radius);
+      font-size: 0.88rem;
+      line-height: 1.7;
+      color: var(--text-muted);
+    }
+
+    .linkedin-guide ol {
+      padding-left: 1.25rem;
+      margin: 0.5rem 0 0.75rem;
+    }
+
+    .linkedin-guide li { margin-bottom: 0.3rem; }
+    .linkedin-guide strong { color: var(--text-primary); }
+
+    .guide-title {
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-bottom: 0.5rem;
+    }
+
+    /* Import status message */
+    .import-status {
+      margin-top: 0.85rem;
+      font-size: 0.88rem;
+      font-weight: 500;
+      color: var(--accent);
+    }
+
+    /* Download success toast */
+    .toast {
+      margin-top: 0.75rem;
+      padding: 8px 16px;
+      background: rgba(110, 231, 183, 0.1);
+      border: 1px solid rgba(110, 231, 183, 0.3);
+      border-radius: var(--radius);
+      font-size: 0.88rem;
+      color: var(--accent);
+      text-align: center;
     }
   </style>
 
