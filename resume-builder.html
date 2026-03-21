@@ -10,6 +10,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
 </head>
 <body class="tool-page">
 
@@ -625,13 +626,16 @@ Be honest but encouraging. Keep total response under 500 words.`,
       // Build a clean, print-friendly HTML version of the resume
       const styledHTML = `
         <div style="
-          font-family: Georgia, 'Times New Roman', serif;
-          font-size: 11pt;
-          line-height: 1.5;
+          font-family: Arial, sans serif;
+          font-size: 10.5pt;
+          line-height: 1.45;
           color: #000;
           background: #fff;
           padding: 0;
-          max-width: 100%;
+          width: 670px;
+          max-width: 670px;
+          word-wrap: break-word;
+          overflow-wrap: break-word;
         ">
           ${resumeText
             .split("\n")
@@ -660,10 +664,10 @@ Be honest but encouraging. Keep total response under 500 words.`,
       const filename = `Resume_${today}.pdf`;
 
       const options = {
-        margin:      [0.85, 0.85, 0.85, 0.85],
+        margin:      [0.75, 0.75, 0.75, 0.75],
         filename:    filename,
         image:       { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
+        html2canvas: { scale: 2, useCORS: true, windowWidth: 816 },
         jsPDF:       { unit: "in", format: "letter", orientation: "portrait" }
       };
 
@@ -686,10 +690,10 @@ Be honest but encouraging. Keep total response under 500 words.`,
         });
     }
 
-    // ── EXPORT RESUME TO GOOGLE DOCS ────────────────────────────
-    // Creates a clean .docx-compatible HTML file and downloads it.
-    // User can then open it in Google Docs via File > Open.
-    function exportToGoogleDocs() {
+    // ── EXPORT RESUME AS REAL .DOCX FILE ───────────────────────
+    // Uses docx.js to generate a proper Word document.
+    // Opens natively in Google Docs and Microsoft Word.
+    async function exportToGoogleDocs() {
       const resumeText = document.getElementById("resume-output").textContent;
 
       if (!resumeText || resumeText.includes("Generating your resume")) {
@@ -699,110 +703,176 @@ Be honest but encouraging. Keep total response under 500 words.`,
 
       const gdocsBtn = document.getElementById("gdocs-btn");
       gdocsBtn.disabled = true;
-      gdocsBtn.textContent = "⏳ Preparing...";
+      gdocsBtn.textContent = "⏳ Building .docx...";
 
-      // Convert plain text resume into clean, styled HTML
-      // that Google Docs will import with proper formatting
-      const lines = resumeText.split("\n");
-      let htmlBody = "";
-      let isFirstLine = true;
+      try {
+        // Parse the plain-text resume into structured sections
+        const lines = resumeText.split("\n");
+        const docChildren = [];
+        let isFirstLine = true;
 
-      lines.forEach(line => {
-        const trimmed = line.trim();
+        // docx.js classes we'll use
+        const {
+          Document, Packer, Paragraph, TextRun, HeadingLevel,
+          AlignmentType, BorderStyle, UnderlineType
+        } = docx;
 
-        if (!trimmed) {
-          htmlBody += "<p style='margin:6px 0;'>&nbsp;</p>";
-          return;
+        for (const line of lines) {
+          const trimmed = line.trim();
+
+          // Skip empty lines — add spacing via paragraph spacing instead
+          if (!trimmed) {
+            docChildren.push(new Paragraph({ text: "", spacing: { after: 80 } }));
+            continue;
+          }
+
+          // First non-empty line = Name (large, bold, centered)
+          if (isFirstLine) {
+            docChildren.push(new Paragraph({
+              children: [new TextRun({
+                text: trimmed,
+                bold: true,
+                size: 28,        // 14pt (size is in half-points)
+                font: "Arial",
+              })],
+              alignment: AlignmentType.LEFT,
+              spacing: { after: 40 },
+              border: {
+                bottom: {
+                  color: "000000",
+                  space: 1,
+                  style: BorderStyle.SINGLE,
+                  size: 6,
+                }
+              }
+            }));
+            isFirstLine = false;
+            continue;
+          }
+
+          // Contact info line (has @ symbol or phone number pattern)
+          if (trimmed.includes("@") || trimmed.match(/\d{3}[-.\s]\d{3}/)) {
+            docChildren.push(new Paragraph({
+              children: [new TextRun({
+                text: trimmed,
+                size: 18,   // 9pt
+                font: "Arial",
+                color: "333333",
+              })],
+              spacing: { after: 160 },
+            }));
+            continue;
+          }
+
+          // Section headers — ALL CAPS lines that aren't bullets or numbers
+          if (
+            trimmed === trimmed.toUpperCase() &&
+            trimmed.length > 2 &&
+            !trimmed.startsWith("-") &&
+            !trimmed.startsWith("•") &&
+            !trimmed.match(/^\d/)
+          ) {
+            docChildren.push(new Paragraph({
+              children: [new TextRun({
+                text: trimmed,
+                bold: true,
+                size: 22,   // 11pt
+                font: "Arial",
+              })],
+              spacing: { before: 240, after: 80 },
+              border: {
+                bottom: {
+                  color: "000000",
+                  space: 1,
+                  style: BorderStyle.SINGLE,
+                  size: 6,
+                }
+              }
+            }));
+            continue;
+          }
+
+          // Job title lines — contain " — " or " – " AND "|"
+          if ((trimmed.includes(" — ") || trimmed.includes(" – ")) && trimmed.includes("|")) {
+            docChildren.push(new Paragraph({
+              children: [new TextRun({
+                text: trimmed,
+                bold: true,
+                size: 20,   // 10pt
+                font: "Arial",
+              })],
+              spacing: { before: 120, after: 40 },
+            }));
+            continue;
+          }
+
+          // Bullet points
+          if (trimmed.startsWith("-") || trimmed.startsWith("•")) {
+            const bulletText = trimmed.replace(/^[-•]\s*/, "");
+            docChildren.push(new Paragraph({
+              children: [new TextRun({
+                text: bulletText,
+                size: 20,   // 10pt
+                font: "Arial",
+              })],
+              bullet: { level: 0 },
+              spacing: { after: 40 },
+            }));
+            continue;
+          }
+
+          // Default paragraph (skills lines, certifications, etc.)
+          docChildren.push(new Paragraph({
+            children: [new TextRun({
+              text: trimmed,
+              size: 20,   // 10pt
+              font: "Arial",
+            })],
+            spacing: { after: 60 },
+          }));
         }
 
-        // First non-empty line = the person's name
-        if (isFirstLine) {
-          htmlBody += `<h1 style="font-family: Calibri, Arial, sans-serif; font-size: 20pt; font-weight: bold; margin: 0 0 4px 0; color: #000;">${trimmed}</h1>`;
-          isFirstLine = false;
-          return;
-        }
+        // Build the document
+        const doc = new Document({
+          sections: [{
+            properties: {
+              page: {
+                margin: {
+                  top: 720,     // 0.5in in twips (1440 twips = 1in)
+                  right: 1080,  // 0.75in
+                  bottom: 720,  // 0.5in
+                  left: 1080,   // 0.75in
+                },
+              },
+            },
+            children: docChildren,
+          }],
+        });
 
-        // Contact line (contains @ or phone pattern)
-        if (trimmed.includes("@") || trimmed.match(/\d{3}[-.\s]\d{3}/)) {
-          htmlBody += `<p style="font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #333; margin: 0 0 12px 0;">${trimmed}</p>`;
-          return;
-        }
+        // Generate the .docx blob and trigger download
+        const blob = await Packer.toBlob(doc);
+        const today = new Date().toISOString().split("T")[0];
+        const filename = `Resume_${today}.docx`;
 
-        // Section headers — ALL CAPS lines that are not bullet points
-        if (
-          trimmed === trimmed.toUpperCase() &&
-          trimmed.length > 2 &&
-          !trimmed.startsWith("-") &&
-          !trimmed.match(/^\d/)
-        ) {
-          htmlBody += `<h2 style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #000; padding-bottom: 2px; margin: 16px 0 6px 0; color: #000;">${trimmed}</h2>`;
-          return;
-        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
 
-        // Job title lines (contain " — " or " | " with dates)
-        if ((trimmed.includes(" — ") || trimmed.includes(" – ")) && trimmed.includes("|")) {
-          htmlBody += `<p style="font-family: Calibri, Arial, sans-serif; font-size: 10.5pt; font-weight: bold; margin: 8px 0 2px 0; color: #000;">${trimmed}</p>`;
-          return;
-        }
-
-        // Bullet points
-        if (trimmed.startsWith("-") || trimmed.startsWith("•")) {
-          const bulletText = trimmed.replace(/^[-•]\s*/, "");
-          htmlBody += `<p style="font-family: Calibri, Arial, sans-serif; font-size: 10pt; margin: 2px 0 2px 18pt; color: #000;">• ${bulletText}</p>`;
-          return;
-        }
-
-        // Default paragraph
-        htmlBody += `<p style="font-family: Calibri, Arial, sans-serif; font-size: 10pt; margin: 3px 0; color: #000;">${trimmed}</p>`;
-      });
-
-      // Wrap in full HTML document with Word-compatible meta tags
-      const today = new Date().toISOString().split("T")[0];
-      const fullHTML = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name=ProgId content=Word.Document>
-  <meta name=Generator content="Microsoft Word 15">
-  <title>Resume_${today}</title>
-  <style>
-    @page {
-      margin: 1in;
-      size: letter;
-    }
-    body {
-      font-family: Calibri, Arial, sans-serif;
-      font-size: 10pt;
-      line-height: 1.4;
-      color: #000;
-      background: #fff;
-      max-width: 100%;
-    }
-  </style>
-</head>
-<body>
-  ${htmlBody}
-</body>
-</html>`;
-
-      // Download as .html file — Google Docs opens .html files cleanly
-      const blob = new Blob([fullHTML], { type: "text/html;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Resume_${today}.html`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      // Show instructions to the user
-      setTimeout(() => {
         gdocsBtn.disabled = false;
         gdocsBtn.textContent = "📝 Export to Google Docs";
         showGoogleDocsInstructions();
-      }, 500);
+
+      } catch (err) {
+        console.error("DOCX generation error:", err);
+        gdocsBtn.disabled = false;
+        gdocsBtn.textContent = "📝 Export to Google Docs";
+        alert("Could not generate .docx file. Error: " + err.message + "\n\nTry the Copy to Clipboard button instead and paste into Google Docs.");
+      }
     }
 
     // ── SHOW GOOGLE DOCS UPLOAD INSTRUCTIONS ───────────────────
@@ -823,13 +893,12 @@ Be honest but encouraging. Keep total response under 500 words.`,
         color: #8888aa;
       `;
       instructions.innerHTML = `
-        <p style="font-weight:600; color:#f0f0f5; margin-bottom:0.4rem;">✅ File downloaded! Open it in Google Docs:</p>
-        <ol style="padding-left:1.2rem; margin:0;">
-          <li>Go to <strong style="color:#f0f0f5;">docs.google.com</strong></li>
-          <li>Click <strong style="color:#f0f0f5;">Folder icon → Upload</strong> (top right of the file picker)</li>
-          <li>Upload the <strong style="color:#f0f0f5;">Resume_[date].html</strong> file you just downloaded</li>
-          <li>Google Docs will open it with full formatting — ready to edit and save as PDF</li>
+        <p style="font-weight:600; color:#f0f0f5; margin-bottom:0.4rem;">✅ Resume_[date].docx downloaded! Two ways to open it:</p>
+        <ol style="padding-left:1.2rem; margin:0 0 0.5rem 0;">
+          <li><strong style="color:#f0f0f5;">Google Docs:</strong> Go to docs.google.com → click the folder icon (top right) → Upload → select the .docx file → it opens ready to edit</li>
+          <li><strong style="color:#f0f0f5;">Microsoft Word:</strong> Double-click the file — opens directly, no steps needed</li>
         </ol>
+        <p style="margin-top:0.4rem; font-size:0.82rem;">💡 In Google Docs: File → Download → PDF to export a final, polished PDF.</p>
       `;
 
       const outputSection = document.getElementById("resume-output-section");
