@@ -9,7 +9,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
 </head>
 <body class="tool-page">
@@ -135,12 +134,11 @@
         <span class="label">Your Generated Resume</span>
         <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
           <button class="btn-secondary" onclick="copyResume()">📋 Copy to Clipboard</button>
-          <button class="btn-secondary" onclick="downloadResumePDF()" id="download-btn">⬇️ Download as PDF</button>
-          <button class="btn-secondary" onclick="exportToGoogleDocs()" id="gdocs-btn">📝 Export to Google Docs</button>
+          <button class="btn-secondary" onclick="downloadDocx()" id="docx-btn">⬇️ Download as Word (.docx)</button>
         </div>
       </div>
       <div class="output-box" id="resume-output"></div>
-      <div id="download-toast" style="display:none;" class="toast">✅ Resume downloaded!</div>
+      <div id="docx-toast" style="display:none;" class="toast">✅ Resume (.docx) downloaded!</div>
     </div>
 
   </div>
@@ -610,8 +608,10 @@ Be honest but encouraging. Keep total response under 500 words.`,
       event.target.value = "";
     }
 
-    // ── DOWNLOAD RESUME AS PDF ──────────────────────────────────
-    function downloadResumePDF() {
+    // ── DOWNLOAD RESUME AS .DOCX ────────────────────────────────
+    // Uses docx.js to build a proper Word document that opens in
+    // Google Docs and Microsoft Word without any extra steps.
+    async function downloadDocx() {
       const resumeText = document.getElementById("resume-output").textContent;
 
       if (!resumeText || resumeText.includes("Generating your resume")) {
@@ -619,188 +619,68 @@ Be honest but encouraging. Keep total response under 500 words.`,
         return;
       }
 
-      const downloadBtn = document.getElementById("download-btn");
-      downloadBtn.disabled = true;
-      downloadBtn.textContent = "⏳ Preparing PDF...";
-
-      // Build a clean, print-friendly HTML version of the resume
-      const styledHTML = `
-        <div style="
-          font-family: Arial, sans serif;
-          font-size: 10.5pt;
-          line-height: 1.45;
-          color: #000;
-          background: #fff;
-          padding: 0;
-          width: 670px;
-          max-width: 670px;
-          word-wrap: break-word;
-          overflow-wrap: break-word;
-        ">
-          ${resumeText
-            .split("\n")
-            .map(line => {
-              const trimmed = line.trim();
-              if (!trimmed) return "<br/>";
-              // Detect section headers (all caps or ends with colon)
-              if (trimmed === trimmed.toUpperCase() && trimmed.length > 2 && !trimmed.startsWith("-")) {
-                return `<h2 style="font-size:12pt; font-weight:bold; border-bottom:1px solid #000; padding-bottom:2px; margin:16px 0 6px;">${trimmed}</h2>`;
-              }
-              // Bullet points
-              if (trimmed.startsWith("-") || trimmed.startsWith("•")) {
-                return `<p style="margin:3px 0 3px 18px;">• ${trimmed.replace(/^[-•]\s*/, "")}</p>`;
-              }
-              return `<p style="margin:4px 0;">${trimmed}</p>`;
-            })
-            .join("")}
-        </div>
-      `;
-
-      const container = document.createElement("div");
-      container.innerHTML = styledHTML;
-
-      // Generate today's date for the filename
-      const today = new Date().toISOString().split("T")[0];
-      const filename = `Resume_${today}.pdf`;
-
-      const options = {
-        margin:      [0.75, 0.75, 0.75, 0.75],
-        filename:    filename,
-        image:       { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, windowWidth: 816 },
-        jsPDF:       { unit: "in", format: "letter", orientation: "portrait" }
-      };
-
-      html2pdf()
-        .set(options)
-        .from(container)
-        .save()
-        .then(() => {
-          downloadBtn.disabled = false;
-          downloadBtn.textContent = "⬇️ Download as PDF";
-          // Show success toast
-          const toast = document.getElementById("download-toast");
-          toast.style.display = "block";
-          setTimeout(() => { toast.style.display = "none"; }, 3000);
-        })
-        .catch(() => {
-          downloadBtn.disabled = false;
-          downloadBtn.textContent = "⬇️ Download as PDF";
-          alert("PDF generation failed. Use the Copy button and paste into Google Docs instead.");
-        });
-    }
-
-    // ── EXPORT RESUME AS REAL .DOCX FILE ───────────────────────
-    // Uses docx.js to generate a proper Word document.
-    // Opens natively in Google Docs and Microsoft Word.
-    async function exportToGoogleDocs() {
-      const resumeText = document.getElementById("resume-output").textContent;
-
-      if (!resumeText || resumeText.includes("Generating your resume")) {
-        alert("Please generate your resume first!");
-        return;
-      }
-
-      const gdocsBtn = document.getElementById("gdocs-btn");
-      gdocsBtn.disabled = true;
-      gdocsBtn.textContent = "⏳ Building .docx...";
+      const btn = document.getElementById("docx-btn");
+      btn.disabled = true;
+      btn.textContent = "⏳ Building .docx...";
 
       try {
-        // Parse the plain-text resume into structured sections
+        const { Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle } = docx;
+
         const lines = resumeText.split("\n");
         const docChildren = [];
-        let isFirstLine = true;
-
-        // docx.js classes we'll use
-        const {
-          Document, Packer, Paragraph, TextRun, HeadingLevel,
-          AlignmentType, BorderStyle, UnderlineType
-        } = docx;
+        let nonEmptyCount = 0; // tracks position: 1 = name, 2 = contact line
 
         for (const line of lines) {
           const trimmed = line.trim();
 
-          // Skip empty lines — add spacing via paragraph spacing instead
+          // Empty line — add a small spacer paragraph
           if (!trimmed) {
             docChildren.push(new Paragraph({ text: "", spacing: { after: 80 } }));
             continue;
           }
 
-          // First non-empty line = Name (large, bold, centered)
-          if (isFirstLine) {
+          nonEmptyCount++;
+
+          // Line 1 — candidate's name: large, bold, underlined by a border
+          if (nonEmptyCount === 1) {
             docChildren.push(new Paragraph({
-              children: [new TextRun({
-                text: trimmed,
-                bold: true,
-                size: 28,        // 14pt (size is in half-points)
-                font: "Arial",
-              })],
+              children: [new TextRun({ text: trimmed, bold: true, size: 28, font: "Calibri" })],
               alignment: AlignmentType.LEFT,
               spacing: { after: 40 },
-              border: {
-                bottom: {
-                  color: "000000",
-                  space: 1,
-                  style: BorderStyle.SINGLE,
-                  size: 6,
-                }
-              }
+              border: { bottom: { color: "222222", space: 1, style: BorderStyle.SINGLE, size: 6 } },
             }));
-            isFirstLine = false;
             continue;
           }
 
-          // Contact info line (has @ symbol or phone number pattern)
-          if (trimmed.includes("@") || trimmed.match(/\d{3}[-.\s]\d{3}/)) {
+          // Line 2 — contact details: always the line right after the name
+          if (nonEmptyCount === 2) {
             docChildren.push(new Paragraph({
-              children: [new TextRun({
-                text: trimmed,
-                size: 18,   // 9pt
-                font: "Arial",
-                color: "333333",
-              })],
-              spacing: { after: 160 },
+              children: [new TextRun({ text: trimmed, size: 18, font: "Calibri", color: "444444" })],
+              spacing: { after: 180 },
             }));
             continue;
           }
 
-          // Section headers — ALL CAPS lines that aren't bullets or numbers
+          // Section headers — ALL CAPS, not a bullet, not a digit-starting line
           if (
             trimmed === trimmed.toUpperCase() &&
             trimmed.length > 2 &&
             !trimmed.startsWith("-") &&
             !trimmed.startsWith("•") &&
-            !trimmed.match(/^\d/)
+            !/^\d/.test(trimmed)
           ) {
             docChildren.push(new Paragraph({
-              children: [new TextRun({
-                text: trimmed,
-                bold: true,
-                size: 22,   // 11pt
-                font: "Arial",
-              })],
+              children: [new TextRun({ text: trimmed, bold: true, size: 22, font: "Calibri" })],
               spacing: { before: 240, after: 80 },
-              border: {
-                bottom: {
-                  color: "000000",
-                  space: 1,
-                  style: BorderStyle.SINGLE,
-                  size: 6,
-                }
-              }
+              border: { bottom: { color: "222222", space: 1, style: BorderStyle.SINGLE, size: 4 } },
             }));
             continue;
           }
 
-          // Job title lines — contain " — " or " – " AND "|"
+          // Job title lines — "Title — Company | Date – Date"
           if ((trimmed.includes(" — ") || trimmed.includes(" – ")) && trimmed.includes("|")) {
             docChildren.push(new Paragraph({
-              children: [new TextRun({
-                text: trimmed,
-                bold: true,
-                size: 20,   // 10pt
-                font: "Arial",
-              })],
+              children: [new TextRun({ text: trimmed, bold: true, size: 20, font: "Calibri" })],
               spacing: { before: 120, after: 40 },
             }));
             continue;
@@ -808,48 +688,32 @@ Be honest but encouraging. Keep total response under 500 words.`,
 
           // Bullet points
           if (trimmed.startsWith("-") || trimmed.startsWith("•")) {
-            const bulletText = trimmed.replace(/^[-•]\s*/, "");
             docChildren.push(new Paragraph({
-              children: [new TextRun({
-                text: bulletText,
-                size: 20,   // 10pt
-                font: "Arial",
-              })],
+              children: [new TextRun({ text: trimmed.replace(/^[-•]\s*/, ""), size: 20, font: "Calibri" })],
               bullet: { level: 0 },
               spacing: { after: 40 },
             }));
             continue;
           }
 
-          // Default paragraph (skills lines, certifications, etc.)
+          // Everything else — body paragraph (skills, cert lines, etc.)
           docChildren.push(new Paragraph({
-            children: [new TextRun({
-              text: trimmed,
-              size: 20,   // 10pt
-              font: "Arial",
-            })],
+            children: [new TextRun({ text: trimmed, size: 20, font: "Calibri" })],
             spacing: { after: 60 },
           }));
         }
 
-        // Build the document
         const doc = new Document({
           sections: [{
             properties: {
               page: {
-                margin: {
-                  top: 720,     // 0.5in in twips (1440 twips = 1in)
-                  right: 1080,  // 0.75in
-                  bottom: 720,  // 0.5in
-                  left: 1080,   // 0.75in
-                },
+                margin: { top: 720, right: 1080, bottom: 720, left: 1080 },
               },
             },
             children: docChildren,
           }],
         });
 
-        // Generate the .docx blob and trigger download
         const blob = await Packer.toBlob(doc);
         const today = new Date().toISOString().split("T")[0];
         const filename = `Resume_${today}.docx`;
@@ -863,51 +727,43 @@ Be honest but encouraging. Keep total response under 500 words.`,
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
-        gdocsBtn.disabled = false;
-        gdocsBtn.textContent = "📝 Export to Google Docs";
-        showGoogleDocsInstructions();
+        btn.disabled = false;
+        btn.textContent = "⬇️ Download as Word (.docx)";
+
+        // Show the toast
+        const toast = document.getElementById("docx-toast");
+        toast.style.display = "block";
+        setTimeout(() => { toast.style.display = "none"; }, 4000);
+
+        showDocxInstructions();
 
       } catch (err) {
         console.error("DOCX generation error:", err);
-        gdocsBtn.disabled = false;
-        gdocsBtn.textContent = "📝 Export to Google Docs";
-        alert("Could not generate .docx file. Error: " + err.message + "\n\nTry the Copy to Clipboard button instead and paste into Google Docs.");
+        btn.disabled = false;
+        btn.textContent = "⬇️ Download as Word (.docx)";
+        alert("Could not generate .docx file.\n\nError: " + err.message + "\n\nTry Copy to Clipboard and paste directly into Google Docs or Word.");
       }
     }
 
-    // ── SHOW GOOGLE DOCS UPLOAD INSTRUCTIONS ───────────────────
-    function showGoogleDocsInstructions() {
-      const existing = document.getElementById("gdocs-instructions");
-      if (existing) return; // already showing
+    // ── SHOW POST-DOWNLOAD INSTRUCTIONS ────────────────────────
+    function showDocxInstructions() {
+      const existing = document.getElementById("docx-instructions");
+      if (existing) return;
 
       const instructions = document.createElement("div");
-      instructions.id = "gdocs-instructions";
-      instructions.style.cssText = `
-        margin-top: 1rem;
-        padding: 1rem 1.25rem;
-        background: rgba(110, 231, 183, 0.05);
-        border: 1px solid rgba(110, 231, 183, 0.2);
-        border-radius: 14px;
-        font-size: 0.85rem;
-        line-height: 1.7;
-        color: #8888aa;
-      `;
+      instructions.id = "docx-instructions";
+      instructions.className = "docx-instructions";
       instructions.innerHTML = `
-        <p style="font-weight:600; color:#f0f0f5; margin-bottom:0.4rem;">✅ Resume_[date].docx downloaded! Two ways to open it:</p>
+        <p style="font-weight:600; margin-bottom:0.4rem;">✅ Downloaded! How to open your resume:</p>
         <ol style="padding-left:1.2rem; margin:0 0 0.5rem 0;">
-          <li><strong style="color:#f0f0f5;">Google Docs:</strong> Go to docs.google.com → click the folder icon (top right) → Upload → select the .docx file → it opens ready to edit</li>
-          <li><strong style="color:#f0f0f5;">Microsoft Word:</strong> Double-click the file — opens directly, no steps needed</li>
+          <li><strong>Google Docs:</strong> Go to docs.google.com → folder icon (top right) → Upload → select the .docx file</li>
+          <li><strong>Microsoft Word:</strong> Just double-click the file — it opens directly</li>
         </ol>
-        <p style="margin-top:0.4rem; font-size:0.82rem;">💡 In Google Docs: File → Download → PDF to export a final, polished PDF.</p>
+        <p style="font-size:0.82rem; margin-top:0.4rem;">💡 In Google Docs: File → Download → PDF to get a polished final PDF.</p>
       `;
 
-      const outputSection = document.getElementById("resume-output-section");
-      outputSection.appendChild(instructions);
-
-      // Auto-hide after 20 seconds
-      setTimeout(() => {
-        if (instructions.parentNode) instructions.remove();
-      }, 20000);
+      document.getElementById("resume-output-section").appendChild(instructions);
+      setTimeout(() => { if (instructions.parentNode) instructions.remove(); }, 20000);
     }
 
   </script>
@@ -945,9 +801,9 @@ Be honest but encouraging. Keep total response under 500 words.`,
     }
 
     .mode-btn--active {
-      background: rgba(110, 231, 183, 0.1);
+      background: var(--accent-dim);
       border-color: var(--accent);
-      color: var(--accent);
+      color: var(--accent-text);
     }
 
     /* Import bar */
@@ -1002,8 +858,8 @@ Be honest but encouraging. Keep total response under 500 words.`,
     .linkedin-guide {
       margin-top: 1rem;
       padding: 1rem 1.25rem;
-      background: rgba(110, 231, 183, 0.04);
-      border: 1px solid rgba(110, 231, 183, 0.15);
+      background: var(--accent-dim);
+      border: 1px solid rgba(232, 146, 10, 0.2);
       border-radius: var(--radius);
       font-size: 0.88rem;
       line-height: 1.7;
@@ -1036,13 +892,26 @@ Be honest but encouraging. Keep total response under 500 words.`,
     .toast {
       margin-top: 0.75rem;
       padding: 8px 16px;
-      background: rgba(110, 231, 183, 0.1);
-      border: 1px solid rgba(110, 231, 183, 0.3);
+      background: var(--accent-dim);
+      border: 1px solid rgba(232, 146, 10, 0.3);
       border-radius: var(--radius);
       font-size: 0.88rem;
-      color: var(--accent);
+      color: var(--accent-text);
       text-align: center;
     }
+
+    /* Post-download instructions panel */
+    .docx-instructions {
+      margin-top: 1rem;
+      padding: 1rem 1.25rem;
+      background: var(--accent-dim);
+      border: 1px solid rgba(232, 146, 10, 0.2);
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      line-height: 1.7;
+      color: var(--text-muted);
+    }
+    .docx-instructions strong { color: var(--text-primary); }
   </style>
 
 </body>
